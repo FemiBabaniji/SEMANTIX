@@ -94,7 +94,7 @@ async function suggestPersonalities(analysis: SemanticAnalysis, content: string)
     prompt: `
     You are an expert at creating AI personalities that are HIGHLY SPECIFIC to document content.
       
-    Analyze this document carefully and create 3-5 AI personalities that would be PERFECTLY TAILORED 
+    Analyze this document carefully and create 2 AI personalities that would be PERFECTLY TAILORED 
     to analyze this specific document. Each personality should directly address the main themes, 
     topics, and entities found in the document.
     

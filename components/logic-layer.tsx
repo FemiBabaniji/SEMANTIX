@@ -22,6 +22,7 @@ import {
   Layers,
   MessageSquare,
   Workflow,
+  MoreVertical,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
@@ -29,11 +30,11 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import { useToast } from "@/hooks/use-toast"
 import type { SemanticAnalysis } from "@/lib/semantic-processing"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 
 interface CustomPersonality {
   id: string
@@ -272,6 +273,17 @@ export function LogicLayer({ analysis, onPersonalityChange }: LogicLayerProps) {
       description: selectedAgentsForActions.includes(personalityId)
         ? "Agent removed from workflow"
         : "Agent added to workflow",
+    })
+  }
+
+  // Add a function to view the workflow when personalities are added
+  // Add this function after the toggleAgentSelection function
+
+  const viewWorkflow = () => {
+    setActiveTab("workflow")
+    toast({
+      title: "Workflow view",
+      description: `${selectedAgentsForActions.length} agents selected for workflow`,
     })
   }
 
@@ -680,6 +692,111 @@ export function LogicLayer({ analysis, onPersonalityChange }: LogicLayerProps) {
     }
   }
 
+  // Update the renderPersonalityCard function to include a dropdown menu for workflow actions
+  // Add this function after the formatStrengthLabel function, near the end of the component
+  const renderPersonalityCard = (personality: CustomPersonality, isActive: boolean, isSuggested = false) => {
+    return (
+      <div
+        key={personality.id}
+        data-personality={personality.id}
+        className={`border rounded-md p-2 cursor-pointer ${
+          isActive
+            ? "border-blue-200 bg-blue-50"
+            : isSelectingAgents && selectedAgentsForActions.includes(personality.id)
+              ? "border-green-200 bg-green-50"
+              : "hover:border-blue-200 hover:bg-blue-50"
+        }`}
+        onClick={() => {
+          if (isSelectingAgents) {
+            toggleAgentSelection(personality.id)
+          } else {
+            handlePersonalityChange(personality.id)
+          }
+        }}
+      >
+        <div className="flex items-start justify-between">
+          <div className="flex items-start">
+            <div className={`${personality.color} p-1.5 rounded-full mr-2`}>{personality.icon}</div>
+            <div>
+              <div className="flex items-center">
+                <h4 className="font-medium text-xs">{personality.name}</h4>
+                {isSelectingAgents && selectedAgentsForActions.includes(personality.id) && (
+                  <Badge className="ml-2 bg-green-100 text-green-800 text-[8px]">Selected</Badge>
+                )}
+                {isSuggested && <Badge className="ml-1 bg-blue-100 text-blue-800 text-[8px]">AI</Badge>}
+              </div>
+              <p className="text-[9px] text-gray-500">{personality.description}</p>
+            </div>
+          </div>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => e.stopPropagation()}>
+                <MoreVertical className="h-3 w-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (!selectedAgentsForActions.includes(personality.id)) {
+                    setSelectedAgentsForActions((prev) => [...prev, personality.id])
+                    toast({
+                      title: "Added to workflow",
+                      description: `${personality.name} has been added to your workflow`,
+                    })
+                  }
+                }}
+              >
+                <Workflow className="h-3.5 w-3.5 mr-2" />
+                Add to Workflow
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleEditPersonality(personality)
+                  setShowPersonalityInterface(true)
+                }}
+              >
+                <Edit className="h-3.5 w-3.5 mr-2" />
+                Edit Personality
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleDeletePersonality(personality.id)
+                }}
+              >
+                <Trash2 className="h-3.5 w-3.5 mr-2" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        {/* Display focus areas */}
+        {personality.focus && Array.isArray(personality.focus) && personality.focus.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-1">
+            {personality.focus.slice(0, 2).map((item, index) => (
+              <Badge
+                key={index}
+                variant="outline"
+                className="text-[9px] bg-gray-50 font-sans font-normal py-0 px-1 h-4"
+              >
+                {item}
+              </Badge>
+            ))}
+            {personality.focus.length > 2 && (
+              <Badge variant="outline" className="text-[9px] bg-gray-50 font-sans font-normal py-0 px-1 h-4">
+                +{personality.focus.length - 2}
+              </Badge>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="h-full overflow-auto p-2 space-y-2">
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as any)} className="w-full">
@@ -693,9 +810,14 @@ export function LogicLayer({ analysis, onPersonalityChange }: LogicLayerProps) {
             </TabsTrigger>
             <TabsTrigger
               value="workflow"
-              className="text-[10px] font-sans font-normal h-6 px-2 rounded-none border-b-2 data-[state=active]:border-blue-600 data-[state=active]:text-blue-600 data-[state=active]:shadow-none data-[state=active]:bg-transparent border-transparent"
+              className="text-[10px] font-sans font-normal h-6 px-2 rounded-none border-b-2 data-[state=active]:border-blue-600 data-[state=active]:text-blue-600 data-[state=active]:shadow-none data-[state=active]:bg-transparent border-transparent relative"
             >
               Workflow
+              {selectedAgentsForActions.length > 0 && (
+                <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-[8px] rounded-full w-4 h-4 flex items-center justify-center">
+                  {selectedAgentsForActions.length}
+                </span>
+              )}
             </TabsTrigger>
             <TabsTrigger
               value="settings"
@@ -741,7 +863,20 @@ export function LogicLayer({ analysis, onPersonalityChange }: LogicLayerProps) {
                 )}
               </Button>
 
+              {selectedAgentsForActions.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full justify-center mb-2 font-sans font-normal h-6 text-xs border-gray-300 bg-white hover:bg-gray-50 text-[#1a73e8] hover:text-[#174ea6]"
+                  onClick={viewWorkflow}
+                >
+                  <Workflow className="h-3 w-3 mr-1" />
+                  View Workflow ({selectedAgentsForActions.length} agents)
+                </Button>
+              )}
+
               {/* Only show active personalities in a dotted border container */}
+
               {activePersonality && (
                 <div className="mt-2 border border-dashed border-[#1a73e8]/50 rounded-md p-2 bg-[#f8faff]">
                   <h3 className="text-xs font-sans font-medium text-[#1a73e8] mb-1">Active Agent for Document</h3>
@@ -788,46 +923,42 @@ export function LogicLayer({ analysis, onPersonalityChange }: LogicLayerProps) {
                             </div>
                           </div>
 
-                          <div className="flex gap-1">
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-5 w-5 p-0"
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      handleEditPersonality(personality)
-                                      setShowPersonalityInterface(true)
-                                    }}
-                                  >
-                                    <Edit className="h-2.5 w-2.5" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent className="font-sans font-normal text-xs">Edit</TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-5 w-5 p-0"
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      handleDeletePersonality(personality.id)
-                                    }}
-                                  >
-                                    <Trash2 className="h-2.5 w-2.5" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent className="font-sans font-normal text-xs">Delete</TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          </div>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
+                                <MoreVertical className="h-3 w-3" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-48">
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  if (!selectedAgentsForActions.includes(personality.id)) {
+                                    setSelectedAgentsForActions((prev) => [...prev, personality.id])
+                                    toast({
+                                      title: "Added to workflow",
+                                      description: `${personality.name} has been added to your workflow`,
+                                    })
+                                  }
+                                }}
+                              >
+                                <Workflow className="h-3.5 w-3.5 mr-2" />
+                                Add to Workflow
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  handleEditPersonality(personality)
+                                  setShowPersonalityInterface(true)
+                                }}
+                              >
+                                <Edit className="h-3.5 w-3.5 mr-2" />
+                                Edit Personality
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleDeletePersonality(personality.id)}>
+                                <Trash2 className="h-3.5 w-3.5 mr-2" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
                       </div>
                     ))}
@@ -838,39 +969,9 @@ export function LogicLayer({ analysis, onPersonalityChange }: LogicLayerProps) {
               <div className="mt-3">
                 <h3 className="text-xs font-sans font-medium text-[#5f6368] mb-1">Available Personalities</h3>
                 <div className="space-y-1.5">
-                  {personalities.map((personality) => (
-                    <div
-                      key={personality.id}
-                      data-personality={personality.id}
-                      className={`border rounded-md p-2 cursor-pointer ${
-                        activePersonality === personality.id
-                          ? "border-blue-200 bg-blue-50"
-                          : isSelectingAgents && selectedAgentsForActions.includes(personality.id)
-                            ? "border-green-200 bg-green-50"
-                            : "hover:border-blue-200 hover:bg-blue-50"
-                      }`}
-                      onClick={() => {
-                        if (isSelectingAgents) {
-                          toggleAgentSelection(personality.id)
-                        } else {
-                          handlePersonalityChange(personality.id)
-                        }
-                      }}
-                    >
-                      <div className="flex items-start">
-                        <div className={`${personality.color} p-1.5 rounded-full mr-2`}>{personality.icon}</div>
-                        <div>
-                          <div className="flex items-center">
-                            <h4 className="font-medium text-xs">{personality.name}</h4>
-                            {isSelectingAgents && selectedAgentsForActions.includes(personality.id) && (
-                              <Badge className="ml-2 bg-green-100 text-green-800 text-[8px]">Selected</Badge>
-                            )}
-                          </div>
-                          <p className="text-[9px] text-gray-500">{personality.description}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                  {personalities.map((personality) =>
+                    renderPersonalityCard(personality, activePersonality === personality.id),
+                  )}
                 </div>
               </div>
             </>
@@ -1024,65 +1125,87 @@ export function LogicLayer({ analysis, onPersonalityChange }: LogicLayerProps) {
                     key={personality.id}
                     className="bg-blue-50 border border-blue-200 rounded-md p-2 hover:shadow-sm transition-shadow"
                   >
-                    <div className="flex items-start">
-                      <div className="bg-white p-1.5 rounded-full shadow-sm mr-2">
-                        <div className={`${personality.color} p-1 rounded-full`}>{personality.icon}</div>
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center">
-                            <h4 className="text-xs font-medium">{personality.name}</h4>
-                            <Badge className="ml-1 bg-blue-100 text-blue-800 text-[8px]">AI</Badge>
-                          </div>
-                          <div className="flex gap-1">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-5 text-[8px] font-sans font-normal px-1.5 bg-white"
-                              onClick={() => addSuggestedPersonality(personality)}
-                            >
-                              <Plus className="h-2 w-2 mr-0.5" />
-                              Add
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-5 text-[8px] font-sans font-normal px-1.5"
-                              onClick={() => {
-                                setEditingPersonality(personality)
-                                setShowCustomPersonalityForm(true)
-                                setShowPersonalityInterface(true)
-                              }}
-                            >
-                              <Edit className="h-2 w-2 mr-0.5" />
-                              Edit
-                            </Button>
-                          </div>
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-start">
+                        <div className="bg-white p-1.5 rounded-full shadow-sm mr-2">
+                          <div className={`${personality.color} p-1 rounded-full`}>{personality.icon}</div>
                         </div>
-                        <p className="text-[9px] text-gray-600 mt-0.5">{personality.description}</p>
-
-                        {personality.focus && Array.isArray(personality.focus) && personality.focus.length > 0 && (
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            <span className="text-[8px] text-gray-500 mr-0.5">Focus:</span>
-                            {personality.focus.slice(0, 2).map((item, index) => (
-                              <Badge
-                                key={index}
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center">
+                              <h4 className="text-xs font-medium">{personality.name}</h4>
+                              <Badge className="ml-1 bg-blue-100 text-blue-800 text-[8px]">AI</Badge>
+                            </div>
+                            <div className="flex gap-1">
+                              <Button
                                 variant="outline"
-                                className="text-[8px] bg-white font-sans font-normal py-0 px-1 h-3.5"
+                                size="sm"
+                                className="h-5 text-[8px] font-sans font-normal px-1.5 bg-white"
+                                onClick={() => addSuggestedPersonality(personality)}
                               >
-                                {item}
-                              </Badge>
-                            ))}
-                            {personality.focus.length > 2 && (
-                              <Badge
-                                variant="outline"
-                                className="text-[8px] bg-white font-sans font-normal py-0 px-1 h-3.5"
-                              >
-                                +{personality.focus.length - 2}
-                              </Badge>
-                            )}
+                                <Plus className="h-2 w-2 mr-0.5" />
+                                Add
+                              </Button>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="sm" className="h-5 w-5 p-0">
+                                    <MoreVertical className="h-2.5 w-2.5" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-48">
+                                  <DropdownMenuItem
+                                    onClick={() => {
+                                      if (!selectedAgentsForActions.includes(personality.id)) {
+                                        setSelectedAgentsForActions((prev) => [...prev, personality.id])
+                                        toast({
+                                          title: "Added to workflow",
+                                          description: `${personality.name} has been added to your workflow`,
+                                        })
+                                      }
+                                    }}
+                                  >
+                                    <Workflow className="h-3.5 w-3.5 mr-2" />
+                                    Add to Workflow
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={() => {
+                                      setEditingPersonality(personality)
+                                      setShowCustomPersonalityForm(true)
+                                      setShowPersonalityInterface(true)
+                                    }}
+                                  >
+                                    <Edit className="h-3.5 w-3.5 mr-2" />
+                                    Edit Personality
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </div>
                           </div>
-                        )}
+                          <p className="text-[9px] text-gray-600 mt-0.5">{personality.description}</p>
+
+                          {personality.focus && Array.isArray(personality.focus) && personality.focus.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              <span className="text-[8px] text-gray-500 mr-0.5">Focus:</span>
+                              {personality.focus.slice(0, 2).map((item, index) => (
+                                <Badge
+                                  key={index}
+                                  variant="outline"
+                                  className="text-[8px] bg-white font-sans font-normal py-0 px-1 h-3.5"
+                                >
+                                  {item}
+                                </Badge>
+                              ))}
+                              {personality.focus.length > 2 && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[8px] bg-white font-sans font-normal py-0 px-1 h-3.5"
+                                >
+                                  +{personality.focus.length - 2}
+                                </Badge>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1605,28 +1728,6 @@ function LineChart(props: any) {
 }
 
 function GraduationCap(props: any) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      {...props}
-    >
-      <path d="M3 8v11a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8l-8-4z"></path>
-      <path d="M8 5h8"></path>
-      <path d="M8 3h8"></path>
-      <path d="M12 8v4"></path>
-    </svg>
-  )
-}
-
-function Users(props: any) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
