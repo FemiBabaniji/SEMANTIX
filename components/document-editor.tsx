@@ -1,9 +1,8 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
-import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore"
-import { db } from "@/lib/firebase"
+import { useState, useRef, useEffect, useCallback } from "react"
 import { toast } from "@/hooks/use-toast"
+import { getDocument, saveDocument, createDocumentWithId } from "@/lib/supabase/utils"
 import type { SemanticAnalysis } from "@/lib/semantic-processing"
 
 interface DocumentEditorProps {
@@ -21,76 +20,44 @@ export function DocumentEditor({
 }: DocumentEditorProps) {
   const [content, setContent] = useState("")
   const [isLoading, setIsLoading] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const editorRef = useRef<HTMLDivElement>(null)
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const documentLoadedRef = useRef(false) // Track if document has been loaded
 
-  // Load document from Firebase
-  useEffect(() => {
-    const loadDocument = async () => {
+  // Memoize the saveContent function to prevent recreating it on every render
+  const saveContent = useCallback(
+    async (newContent: string) => {
+      if (!documentId || documentId === "default-doc-id") return
+
       try {
-        setIsLoading(true)
-        const docRef = doc(db, "documents", documentId)
-        const docSnap = await getDoc(docRef)
+        setIsSaving(true)
 
-        if (docSnap.exists()) {
-          const data = docSnap.data()
-          if (data.title) {
-            onTitleChange(data.title)
-          }
-          if (data.content) {
-            setContent(data.content)
-            if (editorRef.current) {
-              editorRef.current.innerHTML = data.content
-            }
-          }
+        console.log(`Saving content for document: ${documentId}`)
+        const success = await saveDocument(documentId, newContent)
+
+        if (!success) {
+          throw new Error("Failed to save document")
         } else {
-          // Create a new document if it doesn't exist
-          await setDoc(docRef, {
-            title: "Prototype for Research",
-            content: "",
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          })
+          console.log("Document saved successfully:", documentId)
         }
       } catch (error) {
-        console.error("Error loading document:", error)
+        console.error("Error saving document:", error)
         toast({
-          title: "Error loading document",
-          description: "Could not load the document from Firebase.",
+          title: "Error saving document",
+          description: "Could not save the document to the database.",
           variant: "destructive",
         })
       } finally {
-        setIsLoading(false)
+        setIsSaving(false)
       }
-    }
-
-    if (documentId) {
-      loadDocument()
-    }
-  }, [documentId, onTitleChange])
-
-  // Save document content to Firebase
-  const saveContent = async (newContent: string) => {
-    if (!documentId) return
-
-    try {
-      const docRef = doc(db, "documents", documentId)
-      await updateDoc(docRef, {
-        content: newContent,
-        updatedAt: new Date().toISOString(),
-      })
-    } catch (error) {
-      console.error("Error saving document:", error)
-      toast({
-        title: "Error saving document",
-        description: "Could not save the document to Firebase.",
-        variant: "destructive",
-      })
-    }
-  }
+    },
+    [documentId],
+  )
 
   // Handle content changes with debounce
-  const handleContentChange = () => {
+  const handleContentChange = useCallback(() => {
     if (editorRef.current) {
       const newContent = editorRef.current.innerHTML
       setContent(newContent)
@@ -105,47 +72,109 @@ export function DocumentEditor({
         saveContent(newContent)
       }, 1000)
     }
-  }
+  }, [saveContent])
 
-  // Run document analysis
-  const runAnalysis = async () => {
-    if (!editorRef.current) return
+  // Load document from Supabase
+  useEffect(() => {
+    // Prevent multiple loads
+    if (documentLoadedRef.current) return
 
-    const content = editorRef.current.innerHTML
-    const plainText = content
-      .replace(/<[^>]*>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
+    const loadDocument = async () => {
+      try {
+        setIsLoading(true)
+        setLoadError(null)
 
-    try {
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          documentId,
-          content: plainText,
-          title: "Prototype for Research",
-        }),
-      })
+        console.log(`Loading document with ID: ${documentId}`)
 
-      if (!response.ok) {
-        throw new Error("Failed to analyze document")
+        // Skip loading for default-doc-id as it doesn't exist yet
+        if (documentId === "default-doc-id") {
+          console.log("Using default document ID, setting default content")
+          const defaultContent = getDefaultContent()
+          setContent(defaultContent)
+          if (editorRef.current) {
+            editorRef.current.innerHTML = defaultContent
+          }
+          setIsLoading(false)
+          documentLoadedRef.current = true
+          return
+        }
+
+        // Try to get the document
+        const document = await getDocument(documentId)
+
+        if (document) {
+          console.log("Document loaded successfully:", document)
+
+          if (document.title) {
+            onTitleChange(document.title)
+          }
+
+          if (document.content) {
+            setContent(document.content)
+            if (editorRef.current) {
+              editorRef.current.innerHTML = document.content
+            }
+          } else {
+            // If document exists but has no content, set default content
+            const defaultContent = getDefaultContent()
+            setContent(defaultContent)
+            if (editorRef.current) {
+              editorRef.current.innerHTML = defaultContent
+            }
+
+            // Save the default content to ensure it's persisted
+            await saveDocument(documentId, defaultContent, document.title)
+          }
+
+          if (document.analysis) {
+            onAnalysisComplete(document.analysis)
+          }
+        } else {
+          console.log(`Document ${documentId} not found, creating it`)
+
+          // If document doesn't exist, create it with default content
+          const defaultContent = getDefaultContent()
+          setContent(defaultContent)
+          if (editorRef.current) {
+            editorRef.current.innerHTML = defaultContent
+          }
+
+          // Create the document with the specific ID, passing null for userId
+          const newDoc = await createDocumentWithId(documentId, "Prototype for Research", null)
+
+          if (newDoc) {
+            console.log("Document created successfully:", newDoc)
+
+            // Save the default content
+            await saveDocument(documentId, defaultContent, "Prototype for Research")
+          } else {
+            throw new Error("Failed to create document with ID: " + documentId)
+          }
+        }
+      } catch (error) {
+        console.error("Error loading document:", error)
+        setLoadError("Could not load the document. Please try again.")
+
+        // Set default content even if there's an error
+        const defaultContent = getDefaultContent()
+        setContent(defaultContent)
+        if (editorRef.current) {
+          editorRef.current.innerHTML = defaultContent
+        }
+
+        toast({
+          title: "Error loading document",
+          description: "Could not load the document from the database.",
+          variant: "destructive",
+        })
+      } finally {
+        setIsLoading(false)
+        documentLoadedRef.current = true
       }
-
-      const data = await response.json()
-      onAnalysisComplete(data.analysis)
-      onSetActiveLayer("metadata")
-    } catch (error) {
-      console.error("Error analyzing document:", error)
-      toast({
-        title: "Analysis failed",
-        description: "There was an error analyzing your document. Please try again.",
-        variant: "destructive",
-      })
     }
-  }
+
+    loadDocument()
+  }, [documentId, onTitleChange, onAnalysisComplete, saveContent])
 
   // Clean up timeout on unmount
   useEffect(() => {
@@ -156,10 +185,60 @@ export function DocumentEditor({
     }
   }, [])
 
+  // Default content for new documents
+  const getDefaultContent = () => {
+    return `
+      <h1>Welcome to Semantix: A New Google Feature</h1>
+      <p>
+        This prototype demonstrates how Semantix enhances your document experience with AI-powered analysis and
+        organization.
+      </p>
+      <p>Key features include:</p>
+      <ul>
+        <li>Automatic document tagging and organization</li>
+        <li>AI personalities that analyze your content from different perspectives</li>
+        <li>Integration with third-party tools and automation capabilities</li>
+        <li>Hierarchical document structure visualization</li>
+      </ul>
+      <p>Try exploring the sidebar on the right to see these features in action!</p>
+
+      <h2 id="feature-suggestions">Feature Suggestions</h2>
+      <p>
+        <strong>We value your feedback!</strong> Please document any additional features you believe would
+        enhance your experience with Semantix below:
+      </p>
+      <ol>
+        <li>What additional capabilities would make Semantix more valuable to you?</li>
+        <li>How would these features improve your workflow?</li>
+        <li>Are there specific integrations you'd like to see with other tools?</li>
+      </ol>
+
+      <h3>How would these features improve your workflow?</h3>
+      <p>Please explain how your suggested features would help you work more efficiently or effectively.</p>
+    `
+  }
+
   if (isLoading) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+      </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center p-6 max-w-md">
+          <div className="text-red-500 text-xl mb-4">Error Loading Document</div>
+          <p className="mb-4">{loadError}</p>
+          <button
+            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+            onClick={() => window.location.reload()}
+          >
+            Try Again
+          </button>
+        </div>
       </div>
     )
   }
@@ -173,41 +252,14 @@ export function DocumentEditor({
           contentEditable
           onInput={handleContentChange}
           suppressContentEditableWarning
-          dangerouslySetInnerHTML={{
-            __html:
-              content ||
-              `
-              <h1>Welcome to Semantix: A New Google Feature</h1>
-              <p>
-                This prototype demonstrates how Semantix enhances your document experience with AI-powered analysis and
-                organization.
-              </p>
-              <p>Key features include:</p>
-              <ul>
-                <li>Automatic document tagging and organization</li>
-                <li>AI personalities that analyze your content from different perspectives</li>
-                <li>Integration with third-party tools and automation capabilities</li>
-                <li>Hierarchical document structure visualization</li>
-              </ul>
-              <p>Try exploring the sidebar on the right to see these features in action!</p>
-
-              <h2 id="feature-suggestions">Feature Suggestions</h2>
-              <p>
-                <strong>We value your feedback!</strong> Please document any additional features you believe would
-                enhance your experience with Semantix below:
-              </p>
-              <ol>
-                <li>What additional capabilities would make Semantix more valuable to you?</li>
-                <li>How would these features improve your workflow?</li>
-                <li>Are there specific integrations you'd like to see with other tools?</li>
-              </ol>
-
-              <h3>How would these features improve your workflow?</h3>
-              <p>Please explain how your suggested features would help you work more efficiently or effectively.</p>
-            `,
-          }}
+          dangerouslySetInnerHTML={{ __html: content }}
         />
       </div>
+      {isSaving && (
+        <div className="fixed bottom-4 right-4 bg-gray-800 text-white px-3 py-1 rounded-md text-sm opacity-70">
+          Saving...
+        </div>
+      )}
     </div>
   )
 }

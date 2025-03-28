@@ -1,8 +1,8 @@
 "use client"
 
 import type React from "react"
-
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
+import { useSearchParams, useRouter } from "next/navigation"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -38,18 +38,21 @@ import {
   Code,
   Play,
   HelpCircle,
+  FolderOpen,
 } from "lucide-react"
 import { QuestionnaireProvider } from "@/components/questionnaire/questionnaire-provider"
-import { useToast } from "@/hooks/use-toast"
 import { toast } from "@/hooks/use-toast"
 import GoogleStyledLogo from "@/components/google-styled-logo"
 import { MetadataLayer } from "@/components/metadata-layer"
 import { LogicLayer } from "@/components/logic-layer"
 import { ActionLayer } from "@/components/action-layer"
+import { DocumentEditor } from "@/components/document-editor"
 import type { SemanticAnalysis } from "@/lib/semantic-processing"
 import { OnboardingProvider } from "@/components/onboarding/onboarding-provider"
 import { OnboardingController } from "@/components/onboarding/onboarding-controller"
 import { useOnboarding } from "@/components/onboarding/onboarding-provider"
+import { createDocument, saveDocument } from "@/lib/supabase/utils"
+import { DebugPanel } from "@/components/debug-panel"
 
 // Define questionnaire steps
 const questionnaireSteps = [
@@ -273,69 +276,107 @@ const questionnaireSteps = [
   },
 ]
 
-// Update the handleQuestionnaireComplete function to ensure onboarding starts after questionnaire closes
-const handleQuestionnaireComplete = (responses: any) => {
-  console.log("Research questionnaire completed with responses:", responses)
-
-  // Use toast directly instead of from a hook inside a function
-  toast({
-    title: "Thank you for your feedback!",
-    description: "Your responses will help us improve document organization features.",
-    duration: 5000,
-  })
-
-  // Start onboarding after a short delay to ensure questionnaire is fully closed
-  setTimeout(() => {
-    if (onboardingStartRef.current) {
-      console.log("Starting onboarding after questionnaire completion")
-      onboardingStartRef.current()
-    }
-  }, 1500) // Increased delay to ensure questionnaire modal is fully closed
-}
-
-// Mock data for initial render
-const initialAnalysis: SemanticAnalysis = {
-  topics: [],
-  entities: [],
-  segments: [],
-}
-
 function MainPageContent({ onboardingStartRef }: { onboardingStartRef: React.MutableRefObject<(() => void) | null> }) {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const documentId = searchParams.get("id") || "default-doc-id"
   const [documentTitle, setDocumentTitle] = useState("Prototype for Research")
   const [isSaved, setIsSaved] = useState(true)
   const [activeLayer, setActiveLayer] = useState<"metadata" | "logic" | "action">("metadata")
-  const [analysis, setAnalysis] = useState<SemanticAnalysis>(initialAnalysis)
-  const editorRef = useRef<HTMLDivElement>(null)
-  const { toast } = useToast() // Move useToast hook outside of the component
+  const [analysis, setAnalysis] = useState<SemanticAnalysis>({
+    topics: [],
+    entities: [],
+    segments: [],
+  })
   const { startOnboarding } = useOnboarding()
   const [isAnalyzing, setIsAnalyzing] = useState(false)
-  const [analysisProgress, setAnalysisProgress] = useState(0)
+  const documentInitializedRef = useRef(false)
 
   // Set the onboarding start function in the ref so it can be called from the parent
   useEffect(() => {
     onboardingStartRef.current = startOnboarding
   }, [startOnboarding, onboardingStartRef])
 
-  // Simulate auto-saving
+  // Create a new document if needed - with useRef to prevent multiple executions
   useEffect(() => {
-    if (!isSaved) {
-      const timer = setTimeout(() => {
-        setIsSaved(true)
-      }, 2000)
-
-      return () => clearTimeout(timer)
+    // Skip if we've already initialized or if we have a valid document ID
+    if (documentInitializedRef.current || documentId !== "default-doc-id") {
+      return
     }
-  }, [isSaved])
 
-  const handleEditorChange = () => {
-    setIsSaved(false)
-  }
+    const initializeDocument = async () => {
+      try {
+        console.log("Creating a new document...")
+        documentInitializedRef.current = true
+
+        // Create a new document in Supabase with null user_id
+        const newDoc = await createDocument("Prototype for Research", null)
+
+        if (newDoc && newDoc.id) {
+          console.log("New document created successfully:", newDoc.id)
+          // Redirect to the new document URL without reloading the page
+          router.replace(`/?id=${newDoc.id}`, { scroll: false })
+        } else {
+          console.error("Failed to create a new document - no document ID returned")
+          toast({
+            title: "Error creating document",
+            description: "Could not create a new document. Please try again.",
+            variant: "destructive",
+          })
+        }
+      } catch (error) {
+        console.error("Error creating initial document:", error)
+        toast({
+          title: "Error creating document",
+          description: "Could not create a new document. Please try again.",
+          variant: "destructive",
+        })
+      }
+    }
+
+    initializeDocument()
+  }, [documentId, router])
+
+  // Memoize the title change handler to prevent recreating it on every render
+  const handleTitleChange = useCallback(
+    async (title: string) => {
+      setDocumentTitle(title)
+      setIsSaved(false)
+
+      // Save to Supabase
+      try {
+        console.log("Saving document title:", title)
+        const success = await saveDocument(documentId, "", title)
+        if (success) {
+          setIsSaved(true)
+          console.log("Document title saved successfully")
+        } else {
+          throw new Error("Failed to save document title")
+        }
+      } catch (err) {
+        console.error("Failed to save document title:", err)
+        toast({
+          title: "Save failed",
+          description: "Could not save your changes to the database.",
+          variant: "destructive",
+        })
+      }
+    },
+    [documentId],
+  )
+
+  const handleAnalysisComplete = useCallback((newAnalysis: SemanticAnalysis) => {
+    setAnalysis(newAnalysis)
+    setActiveLayer("metadata")
+    toast({
+      title: "Analysis complete",
+      description: "Document has been analyzed successfully.",
+      variant: "success",
+    })
+  }, [])
 
   const formatText = (command: string, value = "") => {
     document.execCommand(command, false, value)
-    if (editorRef.current) {
-      editorRef.current.focus()
-    }
   }
 
   const handlePersonalityChange = (personalityId: string) => {
@@ -349,94 +390,6 @@ function MainPageContent({ onboardingStartRef }: { onboardingStartRef: React.Mut
     { name: "Taylor Wong", image: "/placeholder.svg?height=32&width=32" },
   ]
 
-  // Update the runAnalysis function in app/page.tsx to properly analyze the current document and update the metadata section
-  const runAnalysis = () => {
-    toast({
-      title: "Analysis started",
-      description: "Analyzing document content...",
-    })
-
-    // Get the current document content from the editor
-    const editorElement = document.querySelector('[contenteditable="true"]')
-    if (!editorElement) {
-      toast({
-        title: "Error",
-        description: "Could not find document content",
-        variant: "destructive",
-      })
-      return
-    }
-
-    const content = editorElement.innerHTML
-    const plainText = content
-      .replace(/<[^>]*>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-
-    // Get the current document title
-    const titleElement = document.querySelector("input[value]")
-    const title = titleElement?.getAttribute("value") || "Untitled document"
-
-    // Show loading state
-    setIsAnalyzing(true)
-
-    // Simulate analysis progress
-    const interval = setInterval(() => {
-      setAnalysisProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(interval)
-          return 100
-        }
-        return prev + 10
-      })
-    }, 300)
-
-    // Call the API to analyze the document
-    fetch("/api/analyze", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        documentId: "global-document",
-        content: plainText,
-        title,
-      }),
-    })
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error("Failed to analyze document")
-        }
-        return response.json()
-      })
-      .then((data) => {
-        // Update the analysis state with the results
-        setAnalysis(data.analysis)
-
-        // Set active tab to metadata to show the results
-        setActiveLayer("metadata")
-
-        toast({
-          title: "Analysis complete",
-          description: "Document has been analyzed successfully.",
-          variant: "success",
-        })
-      })
-      .catch((error) => {
-        console.error("Error analyzing document:", error)
-        toast({
-          title: "Analysis failed",
-          description: "There was an error analyzing your document. Please try again.",
-          variant: "destructive",
-        })
-      })
-      .finally(() => {
-        clearInterval(interval)
-        setIsAnalyzing(false)
-        setAnalysisProgress(0)
-      })
-  }
-
   return (
     <div className="flex flex-col h-screen bg-background">
       {/* Header */}
@@ -449,8 +402,7 @@ function MainPageContent({ onboardingStartRef }: { onboardingStartRef: React.Mut
             <Input
               value={documentTitle}
               onChange={(e) => {
-                setDocumentTitle(e.target.value)
-                setIsSaved(false)
+                handleTitleChange(e.target.value)
               }}
               className="h-7 text-lg font-normal border-none focus-visible:ring-0 focus-visible:ring-offset-0 px-2 py-0 font-sans"
             />
@@ -473,6 +425,16 @@ function MainPageContent({ onboardingStartRef }: { onboardingStartRef: React.Mut
           </div>
 
           <Separator orientation="vertical" className="h-6" />
+
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1 font-sans font-normal"
+            onClick={() => router.push("/documents")}
+          >
+            <FolderOpen className="h-4 w-4 mr-1" />
+            My Documents
+          </Button>
 
           <TooltipProvider>
             <Tooltip>
@@ -538,7 +500,7 @@ function MainPageContent({ onboardingStartRef }: { onboardingStartRef: React.Mut
 
       {/* Toolbar */}
       <div className="flex items-center px-4 py-1 border-b">
-        <Button variant="ghost" size="sm" onClick={() => window.history.back()} className="font-sans font-normal">
+        <Button variant="ghost" size="sm" onClick={() => router.push("/documents")} className="font-sans font-normal">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M20 11H7.83L13.42 5.41L12 4L4 12L12 20L13.41 18.59L7.83 13H20V11Z" fill="currentColor" />
           </svg>
@@ -709,7 +671,12 @@ function MainPageContent({ onboardingStartRef }: { onboardingStartRef: React.Mut
         </TooltipProvider>
 
         <div className="ml-auto flex items-center">
-          <Button variant="outline" size="sm" className="mr-2 font-sans font-normal" onClick={runAnalysis}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mr-2 font-sans font-normal"
+            onClick={() => setIsAnalyzing(true)}
+          >
             <Tag className="h-4 w-4 mr-2" />
             Analyze Document
           </Button>
@@ -744,46 +711,13 @@ function MainPageContent({ onboardingStartRef }: { onboardingStartRef: React.Mut
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Editor */}
-        <div className="flex-1 overflow-auto bg-white">
-          <div className="max-w-[850px] mx-auto py-12 px-8">
-            <div
-              ref={editorRef}
-              className="min-h-[calc(100vh-200px)] outline-none prose prose-sm sm:prose lg:prose-lg font-sans"
-              contentEditable
-              onInput={handleEditorChange}
-              suppressContentEditableWarning
-            >
-              <h1>Welcome to Semantix: A New Google Feature</h1>
-              <p>
-                This prototype demonstrates how Semantix enhances your document experience with AI-powered analysis and
-                organization.
-              </p>
-              <p>Key features include:</p>
-              <ul>
-                <li>Automatic document tagging and organization</li>
-                <li>AI personalities that analyze your content from different perspectives</li>
-                <li>Integration with third-party tools and automation capabilities</li>
-                <li>Hierarchical document structure visualization</li>
-              </ul>
-              <p>Try exploring the sidebar on the right to see these features in action!</p>
-
-              <h2 id="feature-suggestions">Feature Suggestions</h2>
-              <p>
-                <strong>We value your feedback!</strong> Please document any additional features you believe would
-                enhance your experience with Semantix below:
-              </p>
-              <ol>
-                <li>What additional capabilities would make Semantix more valuable to you?</li>
-                <li>How would these features improve your workflow?</li>
-                <li>Are there specific integrations you'd like to see with other tools?</li>
-              </ol>
-
-              <h3>How would these features improve your workflow?</h3>
-              <p>Please explain how your suggested features would help you work more efficiently or effectively.</p>
-            </div>
-          </div>
-        </div>
+        {/* Document Editor */}
+        <DocumentEditor
+          documentId={documentId}
+          onTitleChange={handleTitleChange}
+          onAnalysisComplete={handleAnalysisComplete}
+          onSetActiveLayer={setActiveLayer}
+        />
 
         {/* Semantic Layer Sidebar - now permanent */}
         <div className="w-[280px] shrink-0 flex flex-col border-l h-[calc(100vh-96px)] overflow-hidden">
@@ -905,6 +839,8 @@ function MainPageContent({ onboardingStartRef }: { onboardingStartRef: React.Mut
         </Button>
       </div>
 
+      {/* Debug Panel */}
+      <DebugPanel />
       {/* Onboarding Controller */}
       <OnboardingController setActiveLayer={setActiveLayer} />
     </div>
