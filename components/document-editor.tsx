@@ -24,7 +24,20 @@ export function DocumentEditor({
   const [loadError, setLoadError] = useState<string | null>(null)
   const editorRef = useRef<HTMLDivElement>(null)
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const documentLoadedRef = useRef(false) // Track if document has been loaded
+  const documentLoadedRef = useRef(false)
+  const isTypingRef = useRef(false)
+  const pendingContentRef = useRef<string | null>(null)
+
+  // Function to safely set editor content
+  const setEditorContent = useCallback((htmlContent: string) => {
+    if (editorRef.current) {
+      console.log("Setting editor content directly")
+      editorRef.current.innerHTML = htmlContent
+    } else {
+      console.log("Editor ref not available, storing content for later")
+      pendingContentRef.current = htmlContent
+    }
+  }, [])
 
   // Memoize the saveContent function to prevent recreating it on every render
   const saveContent = useCallback(
@@ -58,25 +71,45 @@ export function DocumentEditor({
 
   // Handle content changes with debounce
   const handleContentChange = useCallback(() => {
-    if (editorRef.current) {
-      const newContent = editorRef.current.innerHTML
-      setContent(newContent)
+    if (!editorRef.current) return
 
-      // Clear previous timeout
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current)
-      }
+    // Mark that we're handling user input
+    isTypingRef.current = true
 
-      // Set new timeout for saving
-      saveTimeoutRef.current = setTimeout(() => {
-        saveContent(newContent)
-      }, 1000)
+    const newContent = editorRef.current.innerHTML
+    setContent(newContent)
+
+    // Clear previous timeout
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current)
     }
+
+    // Set new timeout for saving
+    saveTimeoutRef.current = setTimeout(() => {
+      saveContent(newContent)
+      // Reset typing flag after save
+      isTypingRef.current = false
+    }, 1000)
   }, [saveContent])
+
+  // Reset document loaded ref when document ID changes
+  useEffect(() => {
+    documentLoadedRef.current = false
+    setIsLoading(true)
+  }, [documentId])
+
+  // Check if editor ref is available and set pending content if needed
+  useEffect(() => {
+    if (editorRef.current && pendingContentRef.current) {
+      console.log("Editor ref now available, setting pending content")
+      editorRef.current.innerHTML = pendingContentRef.current
+      pendingContentRef.current = null
+    }
+  })
 
   // Load document from Supabase
   useEffect(() => {
-    // Prevent multiple loads
+    // Prevent multiple loads for the same document ID
     if (documentLoadedRef.current) return
 
     const loadDocument = async () => {
@@ -91,9 +124,7 @@ export function DocumentEditor({
           console.log("Using default document ID, setting default content")
           const defaultContent = getDefaultContent()
           setContent(defaultContent)
-          if (editorRef.current) {
-            editorRef.current.innerHTML = defaultContent
-          }
+          setEditorContent(defaultContent)
           setIsLoading(false)
           documentLoadedRef.current = true
           return
@@ -101,6 +132,7 @@ export function DocumentEditor({
 
         // Try to get the document
         const document = await getDocument(documentId)
+        console.log("Document loaded from database:", document)
 
         if (document) {
           console.log("Document loaded successfully:", document)
@@ -110,17 +142,15 @@ export function DocumentEditor({
           }
 
           if (document.content) {
+            console.log("Setting document content:", document.content.substring(0, 100) + "...")
             setContent(document.content)
-            if (editorRef.current) {
-              editorRef.current.innerHTML = document.content
-            }
+            setEditorContent(document.content)
           } else {
             // If document exists but has no content, set default content
+            console.log("Document exists but has no content, setting default")
             const defaultContent = getDefaultContent()
             setContent(defaultContent)
-            if (editorRef.current) {
-              editorRef.current.innerHTML = defaultContent
-            }
+            setEditorContent(defaultContent)
 
             // Save the default content to ensure it's persisted
             await saveDocument(documentId, defaultContent, document.title)
@@ -135,9 +165,7 @@ export function DocumentEditor({
           // If document doesn't exist, create it with default content
           const defaultContent = getDefaultContent()
           setContent(defaultContent)
-          if (editorRef.current) {
-            editorRef.current.innerHTML = defaultContent
-          }
+          setEditorContent(defaultContent)
 
           // Create the document with the specific ID, passing null for userId
           const newDoc = await createDocumentWithId(documentId, "Prototype for Research", null)
@@ -158,9 +186,7 @@ export function DocumentEditor({
         // Set default content even if there's an error
         const defaultContent = getDefaultContent()
         setContent(defaultContent)
-        if (editorRef.current) {
-          editorRef.current.innerHTML = defaultContent
-        }
+        setEditorContent(defaultContent)
 
         toast({
           title: "Error loading document",
@@ -174,7 +200,19 @@ export function DocumentEditor({
     }
 
     loadDocument()
-  }, [documentId, onTitleChange, onAnalysisComplete, saveContent])
+  }, [documentId, onTitleChange, onAnalysisComplete, saveContent, setEditorContent])
+
+  // Set content in editor when content state changes and we're not typing
+  useEffect(() => {
+    if (content && !isTypingRef.current && !isLoading) {
+      console.log("Content state changed, updating editor if needed")
+      // Only update if the content differs from what's in the editor
+      if (editorRef.current && editorRef.current.innerHTML !== content) {
+        console.log("Setting editor content from state")
+        editorRef.current.innerHTML = content
+      }
+    }
+  }, [content, isLoading])
 
   // Clean up timeout on unmount
   useEffect(() => {
@@ -252,7 +290,6 @@ export function DocumentEditor({
           contentEditable
           onInput={handleContentChange}
           suppressContentEditableWarning
-          dangerouslySetInnerHTML={{ __html: content }}
         />
       </div>
       {isSaving && (

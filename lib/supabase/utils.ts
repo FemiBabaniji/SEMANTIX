@@ -1,5 +1,4 @@
-// Fix the import to correctly import testSupabaseConnection
-import { supabase } from "../supabase"
+import { supabase } from "../supabaseClient"
 
 export const saveDocument = async (
   documentId: string,
@@ -14,12 +13,13 @@ export const saveDocument = async (
     }
 
     console.log(`Attempting to save document with ID: ${documentId}`)
+    console.log(`Content length: ${content.length} characters`)
 
     const updates: any = {
       updated_at: new Date().toISOString(),
     }
 
-    if (content) updates.content = content
+    if (content !== undefined) updates.content = content
     if (title) updates.title = title
     if (analysis) updates.analysis = analysis
 
@@ -45,8 +45,8 @@ export const saveDocument = async (
               id: documentId,
               title: title || "Untitled Document",
               content: content || "",
-              user_id: null, // Changed from "anonymous" to null
-              anonymous_access: true, // Added anonymous_access flag
+              user_id: null,
+              anonymous_access: true,
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
             },
@@ -67,7 +67,7 @@ export const saveDocument = async (
     }
 
     // If the document exists, update it
-    console.log(`Document ${documentId} exists, updating it now`)
+    console.log(`Document ${documentId} exists, updating it now with content length: ${content.length}`)
     const { data, error: updateError } = await supabase.from("documents").update(updates).eq("id", documentId).select()
 
     if (updateError) {
@@ -96,22 +96,6 @@ export const getDocument = async (documentId: string) => {
 
     console.log("Fetching document with ID:", documentId)
 
-    // Simplified connection check to avoid potential circular dependencies
-    try {
-      console.log("Checking Supabase connection...")
-      const { error } = await supabase.from("documents").select("count", { count: "exact" }).limit(1)
-
-      if (error) {
-        console.error("Supabase connection check failed:", error)
-        throw new Error("Database connection failed")
-      }
-
-      console.log("Supabase connection successful, querying document...")
-    } catch (connectionError) {
-      console.error("Connection test failed:", connectionError)
-      throw new Error("Database connection failed")
-    }
-
     try {
       const { data, error } = await supabase.from("documents").select("*").eq("id", documentId).single()
 
@@ -127,7 +111,18 @@ export const getDocument = async (documentId: string) => {
         throw error
       }
 
-      console.log("Document fetched successfully:", data ? "Found" : "Not found")
+      console.log(
+        "Document fetched successfully:",
+        data
+          ? {
+              id: data.id,
+              title: data.title,
+              contentLength: data.content ? data.content.length : 0,
+              hasAnalysis: !!data.analysis,
+            }
+          : "Not found",
+      )
+
       return data
     } catch (queryError) {
       console.error("Exception during Supabase query:", queryError)
@@ -194,15 +189,6 @@ export const getUserDocuments = async (userId: string | null = null): Promise<Do
 export const createDocument = async (title: string, userId: string | null = null): Promise<Document | null> => {
   try {
     console.log(`Creating new document with title "${title}"`)
-
-    // Simplified connection check
-    try {
-      const { error } = await supabase.from("documents").select("count", { count: "exact" }).limit(1)
-      if (error) throw error
-    } catch (connectionError) {
-      console.error("Database connection check failed:", connectionError)
-      throw new Error("Database connection failed")
-    }
 
     const newDocument = {
       title: title || "Untitled Document",
